@@ -1,0 +1,80 @@
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: green_drive_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: green_drive
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d green_drive"]
+      interval: 5s
+      retries: 5
+
+  airflow-init:
+    image: apache/airflow:2.7.3
+    container_name: green_drive_airflow_init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/green_drive
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:  # Mount our local project directories into the Airflow container
+      - ./dags:/opt/airflow/dags  # DAGs
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data  # Raw CSVs
+      - ./plugins:/opt/airflow/plugins
+      - ./requirements.txt:/requirements.txt
+    entrypoint: >
+      bash -c "
+      python -m pip install --upgrade pip &&
+      pip install --user -r /requirements.txt &&
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@something.com
+      "
+  
+  airflow-webserver:
+    image: apache/airflow:2.7.3
+    container_name: green_drive_airflow_web
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/green_drive
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data
+      - ./plugins:/opt/airflow/plugins
+    command: airflow webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.3
+    container_name: green_drive_airflow_scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/green_drive
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data
+      - ./plugins:/opt/airflow/plugins
+    command: airflow scheduler
+
+volumes:
+  postgres_data:
